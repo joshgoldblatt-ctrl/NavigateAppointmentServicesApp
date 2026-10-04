@@ -1,12 +1,27 @@
 <!--
 ================================================================================
   App:          LaGuardia Navigate Appointment Services App
-  Version:      6.1
-  Released:     June 16, 2026
+  Version:      6.2
+  Released:     October 4, 2026
   Developed by: Josh Goldblatt using Claude
 ================================================================================
   CHANGELOG (most recent first)
 --------------------------------------------------------------------------------
+  v6.2  2026-10-04
+    - Service unbundling is now parentheses-aware. Reported Services is split
+      on commas that are NOT inside parentheses, so a service such as
+      "Award Status (Pell, TAP, Scholarships)" is counted as one service
+      instead of three fragments. New splitServices() helper (same logic as
+      the Check-in Cleanup App v3.0+ and the Engagement Metrics App v6.5)
+      replaces the plain split(',') at both call sites: the pass that builds
+      the Service filter options and the counting pass that feeds By Location,
+      By Staff, the Excel export, and the filtered-CSV service check.
+    - Effect on numbers: total appointments, duplicates, and the By Location /
+      By Staff appointment totals are unchanged. "Unique Services" drops by the
+      number of fragments previously produced, and per-service counts shift only
+      for services whose names contain parenthesized commas. The Service filter's
+      option list changes accordingly. The v3.0 note describing this as a known
+      limitation is now resolved.
   v6.1  2026-06-16
     - BUG FIX: blank rows in the upload were being counted. Navigate exports
       can append a block of all-empty rows (",,,,,," lines with every field
@@ -214,7 +229,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LaGuardia Navigate Appointment Services App - Version 6.1</title>
+<title>LaGuardia Navigate Appointment Services App - Version 6.2</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -428,8 +443,8 @@ h1 .accent{color:var(--accent)}
         <div class="subtitle">Upload a Navigate appointment report CSV to see services broken out by location, with appointment counts, unique students, and duplicate-appointment exclusion.</div>
       </div>
       <div class="meta-box">
-        <b>Version:</b><span>6.1</span>
-        <b>Released:</b><span>June 16, 2026</span>
+        <b>Version:</b><span>6.2</span>
+        <b>Released:</b><span>October 4, 2026</span>
         <b>Developed by:</b><span>Josh Goldblatt using Claude</span>
       </div>
     </div>
@@ -711,6 +726,22 @@ function findColumn(keys, candidates) {
 }
 
 // Parse M/D/YYYY, MM/DD/YYYY, or ISO date string to Date (local midnight)
+// v6.2: split a Reported Services cell on commas that are NOT inside
+// parentheses, so "Award Status (Pell, TAP, Scholarships)" stays one service.
+// Same splitter as the Check-in Cleanup App and the Engagement Metrics App.
+function splitServices(str) {
+  var out = [], cur = '', depth = 0, src = String(str || '');
+  for (var i = 0; i < src.length; i++) {
+    var c = src[i];
+    if (c === '(') { depth++; cur += c; }
+    else if (c === ')') { if (depth > 0) depth--; cur += c; }
+    else if (c === ',' && depth === 0) { out.push(cur.trim()); cur = ''; }
+    else cur += c;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(function(s) { return s.length > 0; });
+}
+
 function parseApptDate(s) {
   if (!s) return null;
   var str = String(s).trim();
@@ -901,7 +932,7 @@ function buildFilterOptions() {
     }
     var svcRaw = row[columns.services];
     if (svcRaw) {
-      var svcList = String(svcRaw).split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+      var svcList = splitServices(svcRaw); // v6.2: parentheses-aware
       for (var j = 0; j < svcList.length; j++) services.add(svcList[j]);
     }
     if (columns.date) {
@@ -1143,7 +1174,7 @@ function computeAndRender() {
     // Unbundle services and apply service filter
     var svcRaw = row2[columns.services];
     if (!svcRaw || !String(svcRaw).trim()) continue;
-    var allSvcsForRow = String(svcRaw).split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+    var allSvcsForRow = splitServices(svcRaw); // v6.2: parentheses-aware
 
     var svcsForRow = allSvcsForRow.filter(function(s) {
       return !filters.services || filters.services.size === 0 || filters.services.has(s);
