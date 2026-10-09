@@ -1,12 +1,36 @@
 <!--
 ================================================================================
   App:          LaGuardia Navigate Appointment Services App
-  Version:      6.2
-  Released:     October 4, 2026
+  Version:      6.3
+  Released:     October 9, 2026
   Developed by: Josh Goldblatt using Claude
 ================================================================================
   CHANGELOG (most recent first)
 --------------------------------------------------------------------------------
+  v6.3  2026-10-09
+    - Duplicate exclusion is now OFF by default (checkbox unchecked on load and
+      on Reset filters). The threshold field keeps 60 as its value and is greyed
+      out until the box is checked, so 60 minutes remains the default the
+      moment exclusion is turned on. New syncDedupToggleUI() helper keeps the
+      threshold enabled/disabled state in step with the checkbox on load, on
+      reset, and on change (previously Reset re-enabled the field by hand).
+    - Stat card relabeled: the second card reads "Appointments After Duplicate
+      Removal" when duplicate exclusion is on, and "Total Appointments" when it
+      is off (nothing was removed, so the old label stays accurate there). The
+      number itself is unchanged: rows surviving filters and (if on) dedup.
+    - New "Download CSV - services as columns" export (exportServicesCsv).
+      One row per surviving appointment, every original column in original
+      order, followed by one column per service currently selected in the
+      Service filter (alphabetical). A cell reads "Yes" when that appointment's
+      Reported Services (split with the parentheses-aware splitServices) include
+      that service, otherwise blank. Same surviving row set as the original-
+      format CSV: filters applied, duplicates removed when exclusion is on.
+      Filename: Navigate_Services_Columns_MM.DD.YY.csv (UTF-8 BOM).
+    - Export buttons relabeled so they read as a set: "Download CSV - original
+      format (duplicates and filtered rows removed)", "Download CSV - services
+      as columns (duplicates and filtered rows removed)", and "Download Excel -
+      summary counts by location and staff". The original-format CSV and the
+      Excel export are unchanged in content.
   v6.2  2026-10-04
     - Service unbundling is now parentheses-aware. Reported Services is split
       on commas that are NOT inside parentheses, so a service such as
@@ -229,7 +253,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LaGuardia Navigate Appointment Services App - Version 6.2</title>
+<title>LaGuardia Navigate Appointment Services App - Version 6.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -368,7 +392,7 @@ h1 .accent{color:var(--accent)}
 .stat .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-top:6px;font-weight:600}
 
 /* ---------- Export row ---------- */
-.export-row{display:flex;justify-content:flex-end;gap:.75rem;margin-bottom:22px}
+.export-row{display:flex;justify-content:flex-end;gap:.75rem;margin-bottom:22px;flex-wrap:wrap}
 
 /* ---------- Tabs (pill) ---------- */
 .tabs{display:flex;gap:6px;margin-bottom:24px;flex-wrap:wrap}
@@ -440,11 +464,11 @@ h1 .accent{color:var(--accent)}
     <div class="brand-row">
       <div>
         <h1>Navigate <span class="accent">Appointment Services</span> App</h1>
-        <div class="subtitle">Upload a Navigate appointment report CSV to see services broken out by location, with appointment counts, unique students, and duplicate-appointment exclusion.</div>
+        <div class="subtitle">Upload a Navigate appointment report CSV to see services broken out by location, with appointment counts, unique students, and optional duplicate-appointment exclusion.</div>
       </div>
       <div class="meta-box">
-        <b>Version:</b><span>6.2</span>
-        <b>Released:</b><span>October 4, 2026</span>
+        <b>Version:</b><span>6.3</span>
+        <b>Released:</b><span>October 9, 2026</span>
         <b>Developed by:</b><span>Josh Goldblatt using Claude</span>
       </div>
     </div>
@@ -532,7 +556,7 @@ h1 .accent{color:var(--accent)}
       </div>
       <div class="dedup-box-body">
         <label class="dedup-toggle-row">
-          <input type="checkbox" id="dedup-enabled" checked>
+          <input type="checkbox" id="dedup-enabled">
           <span>Exclude duplicate appointments</span>
         </label>
         <div class="dedup-threshold-row" id="dedup-threshold-row">
@@ -541,10 +565,11 @@ h1 .accent{color:var(--accent)}
           <span>minutes &rarr; count only the earliest.</span>
         </div>
         <div class="dedup-help">
-          When the same Student ID has more than one appointment at the same Location within this
-          window, only the earliest is counted &mdash; later appointments (and all of their services)
-          are excluded. Matching uses Student ID + Location + Reported Start Date/Time; services are
-          not part of the match. Rows with a missing Student ID or Start Date/Time are never excluded.
+          Off by default. When checked, and the same Student ID has more than one appointment at the
+          same Location within this window (60 minutes unless changed), only the earliest is counted
+          &mdash; later appointments (and all of their services) are excluded. Matching uses Student ID
+          + Location + Reported Start Date/Time; services are not part of the match. Rows with a
+          missing Student ID or Start Date/Time are never excluded.
         </div>
         <div class="dedup-actions">
           <button type="button" class="btn primary" onclick="applyFilters()">Apply</button>
@@ -579,8 +604,9 @@ h1 .accent{color:var(--accent)}
 
     <!-- EXPORT -->
     <div class="export-row">
-      <button type="button" class="btn primary" onclick="exportCsv()">Download CSV</button>
-      <button type="button" class="btn teal" onclick="exportXlsx()">Download Excel</button>
+      <button type="button" class="btn primary" onclick="exportCsv()">Download CSV &ndash; original format (duplicates and filtered rows removed)</button>
+      <button type="button" class="btn primary" onclick="exportServicesCsv()">Download CSV &ndash; services as columns (duplicates and filtered rows removed)</button>
+      <button type="button" class="btn teal" onclick="exportXlsx()">Download Excel &ndash; summary counts by location and staff</button>
     </div>
 
     <!-- TABS -->
@@ -614,8 +640,8 @@ var filters = {
   staff: null,
   staffTeam: null,
   services: null,
-  dedupEnabled: true,    // exclude duplicate appointments
-  dedupThreshold: 60     // minutes
+  dedupEnabled: false,   // exclude duplicate appointments (off by default since v6.3)
+  dedupThreshold: 60     // minutes (default once exclusion is turned on)
 };
 var currentResult = null;   // The currently displayed result (for export)
 var currentDuplicates = []; // Excluded duplicate appointments (for audit + export)
@@ -668,19 +694,23 @@ function setupDupCollapse() {
   });
 }
 
-// Grey out the threshold input when the exclusion is unchecked.
+// Grey out the threshold input when the exclusion is unchecked. (v6.3: pulled
+// into its own function so Reset filters and the initial wiring share it.)
+function syncDedupToggleUI() {
+  var cb = document.getElementById('dedup-enabled');
+  var row = document.getElementById('dedup-threshold-row');
+  var input = document.getElementById('dedup-threshold');
+  var on = !!(cb && cb.checked);
+  if (row) row.classList.toggle('disabled', !on);
+  if (input) input.disabled = !on;
+}
+
 function setupDedupToggle() {
   var cb = document.getElementById('dedup-enabled');
   if (!cb || cb._wired) return;
   cb._wired = true;
-  function sync() {
-    var row = document.getElementById('dedup-threshold-row');
-    var input = document.getElementById('dedup-threshold');
-    if (row) row.classList.toggle('disabled', !cb.checked);
-    if (input) input.disabled = !cb.checked;
-  }
-  cb.addEventListener('change', sync);
-  sync();
+  cb.addEventListener('change', syncDedupToggleUI);
+  syncDedupToggleUI();
 }
 
 function switchTab(tabId) {
@@ -725,7 +755,6 @@ function findColumn(keys, candidates) {
   return null;
 }
 
-// Parse M/D/YYYY, MM/DD/YYYY, or ISO date string to Date (local midnight)
 // v6.2: split a Reported Services cell on commas that are NOT inside
 // parentheses, so "Award Status (Pell, TAP, Scholarships)" stays one service.
 // Same splitter as the Check-in Cleanup App and the Engagement Metrics App.
@@ -742,6 +771,7 @@ function splitServices(str) {
   return out.filter(function(s) { return s.length > 0; });
 }
 
+// Parse M/D/YYYY, MM/DD/YYYY, or ISO date string to Date (local midnight)
 function parseApptDate(s) {
   if (!s) return null;
   var str = String(s).trim();
@@ -822,6 +852,28 @@ function formatDateTime(dt) {
   var h12 = h % 12; if (h12 === 0) h12 = 12;
   var mm = String(dt.getMinutes()).padStart(2, '0');
   return (dt.getMonth() + 1) + '/' + dt.getDate() + '/' + dt.getFullYear() + ' ' + h12 + ':' + mm + ' ' + ap;
+}
+
+// MM.DD.YY stamp for export filenames.
+function fileDateStamp() {
+  var now = new Date();
+  var mm = String(now.getMonth() + 1).padStart(2, '0');
+  var dd = String(now.getDate()).padStart(2, '0');
+  var yy = String(now.getFullYear()).slice(-2);
+  return mm + '.' + dd + '.' + yy;
+}
+
+// Trigger a browser download of CSV text (UTF-8 BOM so Excel opens it cleanly).
+function downloadCsvText(csv, filename) {
+  var blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // =============================================================================
@@ -1027,15 +1079,12 @@ function resetFilters() {
   }
   var hiddenItems = document.querySelectorAll('.multi-select-item.hidden');
   for (var j = 0; j < hiddenItems.length; j++) hiddenItems[j].classList.remove('hidden');
-  // Deduplication defaults
+  // Deduplication defaults (v6.3): exclusion OFF, threshold parked at 60
   var dedupCb = document.getElementById('dedup-enabled');
-  if (dedupCb) dedupCb.checked = true;
+  if (dedupCb) dedupCb.checked = false;
   var dedupThr = document.getElementById('dedup-threshold');
   if (dedupThr) dedupThr.value = '60';
-  setupDedupToggle();
-  var dedupRow = document.getElementById('dedup-threshold-row');
-  if (dedupRow) dedupRow.classList.remove('disabled');
-  if (dedupThr) dedupThr.disabled = false;
+  syncDedupToggleUI();
 }
 
 function applyFilters() {
@@ -1252,8 +1301,11 @@ function renderResult(result) {
     return item;
   }
 
+  // v6.3: label reflects whether duplicate removal is in effect
+  var totalLabel = result.dedupEnabled ? 'Appointments After Duplicate Removal' : 'Total Appointments';
+
   scorecard.appendChild(addStat('Appointments in File', result.originalCount.toLocaleString(), ''));
-  scorecard.appendChild(addStat('Total Appointments', result.totalAppointments.toLocaleString(), 'ink'));
+  scorecard.appendChild(addStat(totalLabel, result.totalAppointments.toLocaleString(), 'ink'));
   scorecard.appendChild(addStat('Excluded (Filtered)', result.excludedFilteredCount.toLocaleString(), 'gold'));
   if (result.dedupEnabled) {
     scorecard.appendChild(addStat('Excluded (Duplicates)', result.excludedDuplicateCount.toLocaleString(), 'gold'));
@@ -1633,12 +1685,7 @@ function exportDuplicates() {
 
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Excluded Duplicates');
-
-  var now = new Date();
-  var mm = String(now.getMonth() + 1).padStart(2, '0');
-  var dd = String(now.getDate()).padStart(2, '0');
-  var yy = String(now.getFullYear()).slice(-2);
-  XLSX.writeFile(wb, 'Navigate_Services_Duplicates_' + mm + '.' + dd + '.' + yy + '.xlsx');
+  XLSX.writeFile(wb, 'Navigate_Services_Duplicates_' + fileDateStamp() + '.xlsx');
 }
 
 // =============================================================================
@@ -1658,20 +1705,46 @@ function exportCsv() {
     quotes: false,        // quote only when needed (commas, quotes, newlines)
     newline: '\r\n'
   });
+  downloadCsvText(csv, 'Navigate_Services_Filtered_' + fileDateStamp() + '.csv');
+}
 
-  var blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-  var url = URL.createObjectURL(blob);
-  var now = new Date();
-  var mm = String(now.getMonth() + 1).padStart(2, '0');
-  var dd = String(now.getDate()).padStart(2, '0');
-  var yy = String(now.getFullYear()).slice(-2);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = 'Navigate_Services_Filtered_' + mm + '.' + dd + '.' + yy + '.csv';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+// =============================================================================
+// CSV export (v6.3) — services as columns. Same surviving rows as exportCsv,
+// every original column in original order, then one column per service
+// currently selected in the Service filter (alphabetical). "Yes" marks the
+// services that appointment's Reported Services include; otherwise blank.
+// =============================================================================
+function exportServicesCsv() {
+  if (!currentResult) return;
+  if (!currentFilteredRows.length) {
+    showError('No rows to export with the current filters.');
+    return;
+  }
+
+  var origHeaders = Object.keys(rawData[0]);
+  var svcCols = filters.services ? Array.from(filters.services).sort(function(a, b) { return a.localeCompare(b); }) : [];
+  var headers = origHeaders.concat(svcCols);
+
+  var data = [];
+  for (var i = 0; i < currentFilteredRows.length; i++) {
+    var row = currentFilteredRows[i];
+    var line = [];
+    for (var c = 0; c < origHeaders.length; c++) {
+      var v = row[origHeaders[c]];
+      line.push(v === null || v === undefined ? '' : v);
+    }
+    var has = {};
+    var svcs = splitServices(row[columns.services]);
+    for (var s = 0; s < svcs.length; s++) has[svcs[s]] = true;
+    for (var k = 0; k < svcCols.length; k++) line.push(has[svcCols[k]] ? 'Yes' : '');
+    data.push(line);
+  }
+
+  var csv = Papa.unparse({ fields: headers, data: data }, {
+    quotes: false,
+    newline: '\r\n'
+  });
+  downloadCsvText(csv, 'Navigate_Services_Columns_' + fileDateStamp() + '.csv');
 }
 
 // =============================================================================
@@ -1732,13 +1805,7 @@ function exportXlsx() {
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(locRows), 'By Location');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(staffRows), 'By Staff');
-
-  var now = new Date();
-  var mm = String(now.getMonth() + 1).padStart(2, '0');
-  var dd = String(now.getDate()).padStart(2, '0');
-  var yy = String(now.getFullYear()).slice(-2);
-  var fname = 'Navigate_Services_' + mm + '.' + dd + '.' + yy + '.xlsx';
-  XLSX.writeFile(wb, fname);
+  XLSX.writeFile(wb, 'Navigate_Services_' + fileDateStamp() + '.xlsx');
 }
 </script>
 </body>
